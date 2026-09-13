@@ -230,6 +230,9 @@ export function createCodeModeExtension(options: CodeModeExtensionOptions = {}) 
 				"functions. Variables and functions persist across calls in this session.",
 				"Prefer this tool when you need to chain tool calls, loop, filter large",
 				"results, or compute — do the work in code and print only what you need.",
+				"If a single direct tool call (bash one-liner, grep -n, read) already",
+				"yields the exact answer, prefer it — this tool pays off for loops,",
+				"multi-step aggregation, and keeping large data out of context.",
 				"",
 				"Python-only helper functions available INSIDE this tool:",
 				`- These names are NOT standalone pi tools; they only exist in Python code passed to ${toolName}.`,
@@ -254,13 +257,14 @@ export function createCodeModeExtension(options: CodeModeExtensionOptions = {}) 
 					: []),
 				...(makeMount
 					? [
-							`- The workspace is mounted READ-ONLY at /workspace: read files with open("/workspace/<path>") or pathlib. Helper-tool paths such as ls/find results are relative to the workspace root. Use .read()/.readlines() for text; parse JSON with json.loads(text). Writes raise PermissionError; change real files with the regular edit/write tools.`,
+							`- The workspace is mounted READ-ONLY at /workspace: read files with open("/workspace/<path>") or pathlib, and parse JSON with json.loads(text). In-sandbox open(..., "w") writes raise PermissionError. Host helpers inside code (write/edit/bash/ls) take paths RELATIVE to the workspace root — e.g. write("out/users.csv", ...), never a "/workspace/..." prefix (it is rejected). Only claim a file was written after the write()/edit() helper returns success.`,
 						]
 					: []),
 			].join("\n"),
 			promptSnippet: `${toolName}: run sandboxed Python; host tools are callable as functions; state persists`,
 			promptGuidelines: [
 				`Use ${toolName} for multi-step tool workflows: loop/filter/aggregate in code and print only the result, instead of issuing many separate tool calls.`,
+				`Prefer a single direct tool call (a bash one-liner or grep -n) when it already yields the exact answer by itself; use ${toolName} when a task needs loops, multi-step aggregation, or must keep large data out of context.`,
 				...(bridge
 					? [
 							`Route file changes by how the content is produced. DERIVED content — computed from data (manifests, indexes, conversions, extractions), the same mechanical transform across many files, or writes that must pass programmatic checks first — belongs inside ${toolName} via write()/edit(): code computes it exactly, verifies before writing, and each mutation is shown for approval. AUTHORED content — new code or prose you are composing, or a single judgment-driven edit — belongs in the regular edit/write tools.`,
