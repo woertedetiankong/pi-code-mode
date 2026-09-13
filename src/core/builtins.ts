@@ -4,6 +4,7 @@
  */
 import { open, readdir, realpath } from "node:fs/promises";
 import { isAbsolute, resolve, sep } from "node:path";
+import { stripVirtualRoot } from "./paths.ts";
 import { argAt, requireString } from "./store.ts";
 import { HostToolError } from "./types.ts";
 import type { HostTool } from "./types.ts";
@@ -11,6 +12,8 @@ import type { HostTool } from "./types.ts";
 export interface BuiltinToolsOptions {
 	/** Workspace root; file tools cannot escape it. */
 	root: string;
+	/** Virtual workspace prefix accepted in paths and stripped before resolution (e.g. "/workspace" when the read-only mount is enabled). Default: none. */
+	virtualRoot?: string;
 	/** Include the read_file tool. Disable when a workspace mount replaces it. Default true. */
 	readFile?: boolean;
 	/** Include the list_files tool. Disable when pi's bridged `ls` replaces it. Default true. */
@@ -31,20 +34,24 @@ const TRUNCATION_MARKER = "\n[...truncated]";
 
 export function createBuiltinTools(options: BuiltinToolsOptions): HostTool[] {
 	const root = resolve(options.root);
+	const virtualRoot = options.virtualRoot;
 	const maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_BYTES;
 	const maxHttpBytes = options.maxHttpBytes ?? DEFAULT_MAX_BYTES;
 	const httpTimeoutMs = options.httpTimeoutMs ?? DEFAULT_HTTP_TIMEOUT_MS;
 	const fetchImpl = options.fetchImpl ?? fetch;
 
 	// Resolves a workspace-relative path and rejects anything outside the
-	// root, including symlink escapes.
-	async function resolveInRoot(relPath: string): Promise<string> {
+	// root, including symlink escapes. Paths carrying the sandbox's virtual
+	// workspace prefix ("/workspace/...") are normalized first, so helpers
+	// accept the same spelling the read-only mount exposes for reads.
+	async function resolveInRoot(input: string): Promise<string> {
+		const relPath = virtualRoot ? stripVirtualRoot(input, virtualRoot) : input;
 		if (isAbsolute(relPath)) {
-			throw new HostToolError(`absolute paths are not allowed: '${relPath}'`, "PermissionError");
+			throw new HostToolError(`absolute paths are not allowed: '${input}'`, "PermissionError");
 		}
 		const resolved = resolve(root, relPath);
 		if (resolved !== root && !resolved.startsWith(root + sep)) {
-			throw new HostToolError(`path escapes the workspace root: '${relPath}'`, "PermissionError");
+			throw new HostToolError(`path escapes the workspace root: '${input}'`, "PermissionError");
 		}
 		let real: string;
 		try {

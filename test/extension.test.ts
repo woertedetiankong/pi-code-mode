@@ -115,6 +115,24 @@ describe("extension basics", () => {
 		}
 	});
 
+	it("accepts /workspace-prefixed paths in bridged host helpers (regression)", async () => {
+		// Models mix paradigms: open('/workspace/x') reads work, so they pass
+		// write('/workspace/x', ...) too. The bridge must strip the prefix
+		// instead of rejecting the write (which previously led to retry loops
+		// ending in a false "done").
+		const ext = await loadExtension({ toolStore: false, typeCheck: false, autoApprove: true }, workspace);
+		try {
+			const read = await ext.execute({ code: "read('/workspace/data.json')" });
+			assert.ok(text(read).includes("42"), `bridged read should accept /workspace prefix, got: ${text(read)}`);
+			const written = await ext.execute({ code: "write('/workspace/prefixed.txt', 'ok')" });
+			assert.ok(!/error/i.test(text(written)), `bridged write should succeed, got: ${text(written)}`);
+			const check = await ext.execute({ code: "open('/workspace/prefixed.txt').read()" });
+			assert.ok(text(check).includes("ok"), `expected written content, got: ${text(check)}`);
+		} finally {
+			await ext.shutdown();
+		}
+	});
+
 	it("type-checks tool calls before execution", async () => {
 		const echo: HostTool = {
 			name: "echo",

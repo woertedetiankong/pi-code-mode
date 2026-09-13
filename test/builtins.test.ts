@@ -42,6 +42,32 @@ describe("read_file path safety", () => {
 			);
 		}
 	});
+
+	it("accepts the virtual /workspace prefix when virtualRoot is set", async () => {
+		const readFile = tool("read_file", { root, virtualRoot: "/workspace" });
+		assert.equal(await readFile.execute(["/workspace/inside.txt"], {}), "inside");
+		const listFiles = tool("list_files", { root, virtualRoot: "/workspace" });
+		const entries = (await listFiles.execute(["/workspace"], {})) as string[];
+		assert.ok(Array.isArray(entries) && entries.includes("inside.txt"));
+		// Symlink/junction escapes still blocked through the prefixed spelling.
+		await assert.rejects(
+			async () => readFile.execute(["/workspace/sneaky/secret.txt"], {}),
+			(err: unknown) => err instanceof HostToolError && err.pythonType === "PermissionError",
+		);
+	});
+
+	it("still rejects absolute paths without virtualRoot, and other absolutes with it", async () => {
+		const plain = tool("read_file", { root });
+		await assert.rejects(
+			async () => plain.execute(["/workspace/inside.txt"], {}),
+			(err: unknown) => err instanceof HostToolError && err.pythonType === "PermissionError",
+		);
+		const prefixed = tool("read_file", { root, virtualRoot: "/workspace" });
+		await assert.rejects(
+			async () => prefixed.execute(["/etc/passwd"], {}),
+			(err: unknown) => err instanceof HostToolError && err.pythonType === "PermissionError",
+		);
+	});
 });
 
 describe("http_get deadline", () => {

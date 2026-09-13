@@ -27,6 +27,8 @@ import { formatCall, pyRepr } from "../core/values.ts";
 import { createPiBridgeTools } from "./bridge.ts";
 
 const DEFAULT_TOOL_NAME = "code";
+/** Virtual path the read-only workspace mount is exposed at inside the sandbox. */
+const VIRTUAL_WORKSPACE_PATH = "/workspace";
 /** Hard wall-clock deadline per interpreter turn; the watchdog kills past it. */
 const DEFAULT_REQUEST_TIMEOUT_SECS = 30;
 /** Ceiling on serialized state persisted in tool-result details. */
@@ -125,7 +127,7 @@ export function createCodeModeExtension(options: CodeModeExtensionOptions = {}) 
 		if (options.mountWorkspace ?? true) {
 			try {
 				if (!statSync(root).isDirectory()) throw new Error("not a directory");
-				makeMount = () => new MountDir({ virtualPath: "/workspace", hostPath: root, mode: "read-only" });
+				makeMount = () => new MountDir({ virtualPath: VIRTUAL_WORKSPACE_PATH, hostPath: root, mode: "read-only" });
 			} catch {
 				// Root missing/unreadable: degrade to the read_file tool rather
 				// than failing the whole extension load.
@@ -134,13 +136,16 @@ export function createCodeModeExtension(options: CodeModeExtensionOptions = {}) 
 		}
 
 		const bridge = options.bridgePiTools ?? true;
+		// With the mount active, sandbox reads see "/workspace/<path>"; host
+		// helpers accept the same spelling and strip it back to a relative path.
+		const virtualRoot = makeMount ? VIRTUAL_WORKSPACE_PATH : undefined;
 		const registry = new ToolRegistry(options.tools);
 		if (bridge) {
-			for (const tool of createPiBridgeTools(root)) registry.add(tool);
+			for (const tool of createPiBridgeTools(root, { virtualRoot })) registry.add(tool);
 		}
 		if (!options.noBuiltins) {
 			// The mount replaces read_file with plain open(); bridged ls replaces list_files.
-			for (const tool of createBuiltinTools({ root, readFile: !makeMount, listFiles: !bridge })) {
+			for (const tool of createBuiltinTools({ root, readFile: !makeMount, listFiles: !bridge, virtualRoot })) {
 				registry.add(tool);
 			}
 		}
@@ -257,7 +262,7 @@ export function createCodeModeExtension(options: CodeModeExtensionOptions = {}) 
 					: []),
 				...(makeMount
 					? [
-							`- The workspace is mounted READ-ONLY at /workspace: read files with open("/workspace/<path>") or pathlib, and parse JSON with json.loads(text). In-sandbox open(..., "w") writes raise PermissionError. Host helpers inside code (write/edit/bash/ls) take paths RELATIVE to the workspace root — e.g. write("out/users.csv", ...), never a "/workspace/..." prefix (it is rejected). Only claim a file was written after the write()/edit() helper returns success.`,
+							`- The workspace is mounted READ-ONLY at /workspace: read files with open("/workspace/<path>") or pathlib, and parse JSON with json.loads(text). In-sandbox open(..., "w") writes raise PermissionError. Host helpers inside code (write/edit/ls) take paths RELATIVE to the workspace root — e.g. write("out/users.csv", ...); a leading "/workspace/" prefix on path arguments is accepted and stripped (bash command strings are not rewritten). Only claim a file was written after the write()/edit() helper returns success.`,
 						]
 					: []),
 			].join("\n"),

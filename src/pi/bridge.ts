@@ -15,6 +15,7 @@ import {
 	createWriteTool,
 } from "@earendil-works/pi-coding-agent";
 import { HostToolError } from "../core/types.ts";
+import { stripVirtualRoot } from "../core/paths.ts";
 import type { HostTool, HostToolParam } from "../core/types.ts";
 
 /** The slice of pi's AgentTool the bridge relies on. */
@@ -42,6 +43,8 @@ interface JsonSchema {
 export interface BridgeOptions {
 	/** Gate bash/edit/write behind per-call approval. Default true. */
 	gateMutating?: boolean;
+	/** Virtual workspace prefix stripped from string `path` arguments before dispatch (e.g. "/workspace" when the read-only mount is enabled). Default: none. */
+	virtualRoot?: string;
 }
 
 /**
@@ -54,12 +57,12 @@ export function createPiBridgeTools(cwd: string, options: BridgeOptions = {}): H
 	const readOnly = [createReadTool, createGrepTool, createFindTool, createLsTool];
 	const mutating = [createBashTool, createEditTool, createWriteTool];
 	return [
-		...readOnly.map((factory) => wrapPiTool(factory(cwd) as unknown as PiTool, false)),
-		...mutating.map((factory) => wrapPiTool(factory(cwd) as unknown as PiTool, gate)),
+		...readOnly.map((factory) => wrapPiTool(factory(cwd) as unknown as PiTool, false, options.virtualRoot)),
+		...mutating.map((factory) => wrapPiTool(factory(cwd) as unknown as PiTool, gate, options.virtualRoot)),
 	];
 }
 
-function wrapPiTool(tool: PiTool, requiresApproval: boolean): HostTool {
+function wrapPiTool(tool: PiTool, requiresApproval: boolean, virtualRoot?: string): HostTool {
 	const params = schemaToParams(tool.parameters);
 	const positional = params.map((p) => p.name);
 	let counter = 0;
@@ -80,6 +83,14 @@ function wrapPiTool(tool: PiTool, requiresApproval: boolean): HostTool {
 			for (const [key, value] of Object.entries(kwargs)) {
 				if (key in input) throw new HostToolError(`got multiple values for argument '${key}'`, "TypeError");
 				input[key] = value;
+			}
+			// Models mix path paradigms: sandbox reads go through the virtual
+			// "/workspace" mount, so they naturally pass "/workspace/x" to host
+			// helpers too. Normalize the standard `path` argument so both
+			// spellings reach pi's tools as workspace-relative paths. Bash command
+			// strings are deliberately not rewritten.
+			if (virtualRoot && typeof input.path === "string") {
+				input.path = stripVirtualRoot(input.path, virtualRoot);
 			}
 			let result: Awaited<ReturnType<PiTool["execute"]>>;
 			try {
